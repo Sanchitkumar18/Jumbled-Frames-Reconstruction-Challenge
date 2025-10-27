@@ -2,7 +2,7 @@ import cv2
 import os
 
 
-def frame_extraction(video_path: str, out_dir: str) -> None:
+def extract_frames(video_path: str, out_dir: str) -> None:
     """
     Extracts all frames from a 10-second (30 fps) video into individual images.
 
