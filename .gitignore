@@ -205,3 +205,28 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+# Ignore large input/output media files and generated data
+
+# Data directories
+data/input_video.mp4
+data/shuffled_frames/
+data/reconstructed/
+
+# Video and image formats
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.jpg
+*.jpeg
+*.png
+
+# Feature/temporary files
+*.npy
+*.csv
+*.pkl
+*.json
+
+# Logs or debug output
+logs/
+*.log
