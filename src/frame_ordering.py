@@ -1,107 +1,102 @@
 import numpy as np
-from typing import Dict, List
+from typing import Dict as D
+from typing import List as L
 from tqdm import tqdm
-import torch
+import torch as t
 import torchvision.models as models
-import torchvision.transforms as T
-from PIL import Image
+import torchvision.transforms as Transforms
+from PIL import Image as I
 import os
 import concurrent.futures
 
-# ======= Initialize CNN model =======
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-resnet = models.resnet18(pretrained=True)
-resnet = torch.nn.Sequential(*list(resnet.children())[:-1]).to(device).eval()
+device = t.device("cuda" if t.cuda.is_available() else "cpu")#used to check if device has cuda-compatible gpu or not.
+resnet = models.resnet18(pretrained=True)#this is used to create a CNN architecture and to load pretrained datasets.
+resnet = t.nn.Sequential(*list(resnet.children())[:-1]).to(device).eval()
 
-transform = T.Compose([
-    T.Resize((224, 224)),
-    T.ToTensor(),
-    T.Normalize(mean=[0.485, 0.456, 0.406],
+transform = Transforms.Compose([
+    Transforms.Resize((224, 224)),
+    Transforms.ToTensor(),
+    Transforms.Normalize(mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225])
 ])
 
-# ======= AI embedding extraction =======
-def get_ai_features(frame_path: str) -> np.ndarray:
+
+def fetching_features(Path: str) -> np.ndarray:
     try:
-        img = Image.open(frame_path).convert("RGB")
-        with torch.no_grad():
+        img = I.open(Path).convert("RGB")
+        with t.no_grad():
             tensor = transform(img).unsqueeze(0).to(device)
-            feat = resnet(tensor).squeeze().cpu().numpy()
-        feat /= np.linalg.norm(feat) + 1e-8
-        return feat
+            feature = resnet(tensor).squeeze().cpu().numpy()
+        feature /= np.linalg.norm(feature) + 1e-8
+        return feature
     except Exception as e:
-        print(f"[Warning] Failed to extract AI features from {frame_path}: {e}")
+        print(f"Feature extraction failed: {Path}: {e}")
         return np.zeros(512, dtype=np.float32)
 
-def compute_ai_embeddings(frames_dir: str, frame_names: List[str], max_workers: int = 4) -> Dict[str, np.ndarray]:
-    """Compute CNN features in parallel for speed."""
-    ai_features = {}
-    paths = [os.path.join(frames_dir, f) for f in frame_names]
+def fetching_other_features(f_directory: str, f_name: L[str], max_workers: int = 4) -> D[str, np.ndarray]:
+    features = {}
+    paths = [os.path.join(f_directory, f) for f in f_name]
     with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-        for fname, feat in tqdm(zip(frame_names, executor.map(get_ai_features, paths)),
-                                total=len(frame_names), desc="AI Embeddings"):
-            ai_features[fname] = feat
-    return ai_features
+        for fname, feature in tqdm(zip(f_name, executor.map(fetching_features, paths)),
+                                total=len(f_name), desc="other feature fetching..."):
+            features[fname] = feature
+    return features
 
-# ======= Hybrid feature fusion =======
-def combine_features(classic_feat: np.ndarray, ai_feat: np.ndarray) -> np.ndarray:
-    classic_norm = classic_feat / (np.linalg.norm(classic_feat) + 1e-8)
-    return np.concatenate([0.6 * classic_norm, 0.4 * ai_feat])
 
-# ======= Cost and sequencing =======
-def transition_cost(v1: np.ndarray, v2: np.ndarray) -> float:
-    diff = np.linalg.norm(v1 - v2)
-    brightness_diff = abs(np.mean(v1[:16]) - np.mean(v2[:16]))
-    return diff + 0.4 * brightness_diff
+def combining_features(classic_features: np.ndarray, other_features: np.ndarray) -> np.ndarray:
+    normalization = classic_features / (np.linalg.norm(classic_features) + 1e-8)
+    return np.concatenate([0.6 * normalization, 0.4 * other_features])
 
-def greedy_sequence(features: Dict[str, np.ndarray], start_frame: str) -> List[str]:
+
+def cost_of_transition(A: np.ndarray, B: np.ndarray) -> float:
+    difference = np.linalg.norm(A - B)
+    brightness_difference = abs(np.mean(A[:16]) - np.mean(B[:16]))
+    return difference + 0.4 * brightness_difference
+
+def greedy_approach(features: D[str, np.ndarray], start_frame: str) -> L[str]:
     remaining = set(features.keys())
     order = [start_frame]
     remaining.remove(start_frame)
     while remaining:
         current = order[-1]
-        best = min(remaining, key=lambda f: transition_cost(features[current], features[f]))
+        best = min(remaining, key=lambda f: cost_of_transition(features[current], features[f]))
         order.append(best)
         remaining.remove(best)
     return order
 
-def smooth_sequence(order: List[str], features: Dict[str, np.ndarray]) -> List[str]:
+def better_approach(order: L[str], features: D[str, np.ndarray]) -> L[str]:
     improved = True
     while improved:
         improved = False
         for i in range(len(order) - 2):
             a, b, c = order[i], order[i+1], order[i+2]
-            cost1 = transition_cost(features[a], features[b]) + transition_cost(features[b], features[c])
-            cost2 = transition_cost(features[a], features[c]) + transition_cost(features[c], features[b])
+            cost1 = cost_of_transition(features[a], features[b]) + cost_of_transition(features[b], features[c])
+            cost2 = cost_of_transition(features[a], features[c]) + cost_of_transition(features[c], features[b])
             if cost2 + 0.002 < cost1:
                 order[i+1], order[i+2] = order[i+2], order[i+1]
                 improved = True
     return order
 
-# ======= Main estimation function =======
-def estimate_order(frames_dir: str, features: Dict[str, np.ndarray]) -> List[str]:
-    frame_names = list(features.keys())
+def final_order_estimation(f_directory: str, features: D[str, np.ndarray]) -> L[str]:
+    f_name = list(features.keys())
 
-    # Compute AI embeddings
-    ai_feats = compute_ai_embeddings(frames_dir, frame_names)
+    other_features = fetching_other_features(f_directory, f_name)
 
-    # Fuse handcrafted + AI features
-    fused_features = {f: combine_features(features[f], ai_feats[f]) for f in frame_names}
+    combined_features = {f: combining_features(features[f], other_features[f]) for f in f_name}
 
-    # Start from extreme brightness frames
-    darkest = min(frame_names, key=lambda f: np.mean(features[f][:16]))
-    brightest = max(frame_names, key=lambda f: np.mean(features[f][:16]))
+    worst = min(f_name, key=lambda f: np.mean(features[f][:16]))
+    best = max(f_name, key=lambda f: np.mean(features[f][:16]))
 
-    print("\nEstimating frame order using Hybrid AI + Greedy...")
-    forward = greedy_sequence(fused_features, darkest)
-    backward = list(reversed(greedy_sequence(fused_features, brightest)))
+    print("\nFrame order Estimation under progress...")
+    forward = greedy_approach(combined_features, worst)
+    backward = list(reversed(greedy_approach(combined_features, best)))
 
     def total_cost(order):
-        return sum(transition_cost(fused_features[order[i]], fused_features[order[i+1]])
+        return sum(cost_of_transition(combined_features[order[i]], combined_features[order[i+1]])
                    for i in range(len(order)-1))
 
     best = forward if total_cost(forward) <= total_cost(backward) else backward
-    best = smooth_sequence(best, fused_features)
+    best = better_approach(best, combined_features)
 
-    print(f"✅ Final order estimated ({len(best)} frames)")
+    print(f"Estimated final order have ({len(best)} frames)")
     return best

@@ -1,19 +1,17 @@
 import cv2
 import os
-from typing import List
+from typing import List as L
 
 
-def reconstruct_video(frames_dir: str, order: List[str], output_path: str) -> None:
-    """
-    Combines ordered frames back into a 30 fps MP4 video.
-    """
-    first_frame = cv2.imread(os.path.join(frames_dir, order[0]))
-    h, w, _ = first_frame.shape
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    out = cv2.VideoWriter(output_path, fourcc, 30, (w, h))
+def video_reconstruction(f_directory: str, order: L[str], output_path: str) -> None:#formation of new 30fps video after combining ordered frames.
+    
+    first_frame = cv2.imread(os.path.join(f_directory, order[0]))
+    height, width, _ = first_frame.shape
+    four_character_code = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(output_path, four_character_code, 30, (width, height))
 
     for fname in order:
-        frame = cv2.imread(os.path.join(frames_dir, fname))
+        frame = cv2.imread(os.path.join(f_directory, fname))
         out.write(frame)
 
     out.release()

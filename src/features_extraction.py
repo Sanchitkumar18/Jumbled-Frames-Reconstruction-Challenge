@@ -1,117 +1,82 @@
 import cv2
 import numpy as np
 import os
-import pickle
-import torch
+import pickle as p
+import torch as t
 import torchvision.models as models
-import torchvision.transforms as T
-from PIL import Image
-from typing import Dict
+import torchvision.transforms as Transforms
+from PIL import Image as I
+from typing import Dict as D
 from tqdm import tqdm
 
-# ======== CNN setup (for optional AI feature fusion) ========
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-resnet = models.resnet18(pretrained=True)
-resnet = torch.nn.Sequential(*list(resnet.children())[:-1]).to(device).eval()
+device = t.device("cuda" if t.cuda.is_available() else "cpu")#used to check if device has cuda-compatible gpu or not.
+resnet = models.resnet18(pretrained=True)#this is used to create a CNN architecture and to load pretrained datasets.
+resnet = t.nn.Sequential(*list(resnet.children())[:-1]).to(device).eval()
 
-transform = T.Compose([
-    T.Resize((224, 224)),
-    T.ToTensor(),
-    T.Normalize(mean=[0.485, 0.456, 0.406],
+transform = Transforms.Compose([
+    Transforms.Resize((224, 224)),
+    Transforms.ToTensor(),
+    Transforms.Normalize(mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225])
 ])
 
 
-# ======== HANDCRAFTED FEATURES ========
-def compute_features(frame_path: str) -> np.ndarray:
-    """
-    Computes a refined handcrafted feature vector for a frame.
-    Components:
-        - Brightness grid (4×4 = 16)
-        - Edge intensity (1)
-        - Mean hue (1)
-        - Gradient orientation histogram (8 bins)
-    → Total length = 26-D vector
-    """
-    img = cv2.imread(frame_path)
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+#mathematical aaproach to calculate brightness grid,Edge intensity,hue,and histogram
+def compute_features(Path: str) -> np.ndarray:
+    
+    img = cv2.imread(Path)
+    grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)#converting bg to grey
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)#converting to hue staturation value
 
-    # Normalize brightness
-    gray = cv2.equalizeHist(gray)
+    grey = cv2.equalizeHist(grey)#normalise brightness
 
-    # Brightness grid
-    h, w = gray.shape
-    grid = [np.mean(gray[i*h//4:(i+1)*h//4, j*w//4:(j+1)*w//4]) / 255.0
+    h, w = grey.shape
+    grid = [np.mean(grey[i*h//4:(i+1)*h//4, j*w//4:(j+1)*w//4]) / 255.0
             for i in range(4) for j in range(4)]
-    grid = np.array(grid)
+    grid = np.array(grid)#brightness grid
 
-    # Edge magnitude
-    sobelx = cv2.Sobel(gray, cv2.CV_64F, 1, 0, ksize=3)
-    sobely = cv2.Sobel(gray, cv2.CV_64F, 0, 1, ksize=3)
-    mag = np.sqrt(sobelx**2 + sobely**2)
-    edge_strength = np.mean(mag) / 255.0
+    vertical = cv2.Sobel(grey, cv2.CV_64F, 1, 0, ksize=3)#sobel operator used to detect edges of the image(vertical)
+    horizontal = cv2.Sobel(grey, cv2.CV_64F, 0, 1, ksize=3)#(horizontal)
+    magnitude = np.sqrt(vertical**2 + horizontal**2)
+    strength_of_edge = np.mean(magnitude)/255.0
 
-    # Gradient orientation histogram
-    angle = np.degrees(np.arctan2(sobely, sobelx)) % 180
-    hist, _ = np.histogram(angle, bins=8, range=(0, 180), weights=mag)
-    hist = hist / (np.sum(hist) + 1e-6)
-
-    # Mean hue
-    hue_mean = np.mean(hsv[:, :, 0]) / 180.0
-
-    features = np.concatenate([grid, [edge_strength, hue_mean], hist])
-    return features.astype(np.float32)
+    ang_in_deg = np.degrees(np.arctan2(horizontal, vertical))%180
+    histogram, _ = np.histogram(ang_in_deg, bins=8, range=(0, 180), weights=magnitude)
+    histogram = histogram / (np.sum(histogram) + 1e-6)#histogram gradient calculation
 
 
-# ======== CNN (AI) FEATURES ========
-def compute_ai_features(frame_path: str) -> np.ndarray:
+    hue = np.mean(hsv[:, :, 0])/180.0#mean hue calculation
+
+    extracted_features = np.concatenate([grid, [strength_of_edge, hue], histogram])
+    return extracted_features.astype(np.float32)
+
+
+def compute_other_features(Path: str) -> np.ndarray:
     try:
-        img = Image.open(frame_path).convert("RGB")
-        with torch.no_grad():
+        img = I.open(Path).convert("RGB")
+        with t.no_grad():
             tensor = transform(img).unsqueeze(0).to(device)
-            feat = resnet(tensor).squeeze().cpu().numpy()
-        feat /= np.linalg.norm(feat) + 1e-8
-        return feat.astype(np.float32)
+            feature = resnet(tensor).squeeze().cpu().numpy()
+        feature /= np.linalg.norm(feature) + 1e-8
+        return feature.astype(np.float32)
     except Exception as e:
-        print(f"[Warning] AI feature extraction failed for {frame_path}: {e}")
+        print(f"feature extraction failed :{Path}: {e}")
         return np.zeros(512, dtype=np.float32)
 
 
-# ======== CACHE UTILITIES ========
-def compute_and_cache_features(frames_dir: str, cache_path: str = "data/features_cache.pkl") -> Dict[str, Dict[str, np.ndarray]]:
-    """
-    Compute (handcrafted + CNN) features for all frames and save to cache.
-    Returns a dict: { frame_name: { "classic": ..., "ai": ... } }
-    """
-    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
 
-    if os.path.exists(cache_path):
-        print(f"🔁 Using cached features from {cache_path}")
-        with open(cache_path, "rb") as f:
-            return pickle.load(f)
-
+def compute_all_features(frames: str) -> D[str, D[str, np.ndarray]]:
     features = {}
-    frame_files = sorted([f for f in os.listdir(frames_dir)
-                          if f.lower().endswith((".jpg", ".png"))])
+    f_file = sorted([frame for frame in os.listdir(frames)
+                          if frame.lower().endswith((".jpg", ".png"))])
 
-    print(f"🧮 Computing features for {len(frame_files)} frames...")
-    for fname in tqdm(frame_files, desc="Feature Extraction"):
-        path = os.path.join(frames_dir, fname)
+    print(f"features extraction of {len(f_file)} frames is under progress...")
+    for fname in tqdm(f_file, desc="extracting"):
+        path = os.path.join(frames, fname)
         features[fname] = {
             "classic": compute_features(path),
-            "ai": compute_ai_features(path)
+            "other": compute_other_features(path)
         }
 
-    with open(cache_path, "wb") as f:
-        pickle.dump(features, f)
-    print(f"✅ Features cached at {cache_path}")
+    print("Success: Feature extarction is done")
     return features
-
-
-def load_cached_features(cache_path: str = "data/features_cache.pkl") -> Dict[str, Dict[str, np.ndarray]]:
-    """Load precomputed features from cache."""
-    if not os.path.exists(cache_path):
-        raise FileNotFoundError(f"Feature cache not found: {cache_path}")
-    with open(cache_path, "rb") as f:
-        return pickle.load(f)

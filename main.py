@@ -1,54 +1,43 @@
 import os
-from src.utils import download_from_gdrive_link, verify_video_specs
-from src.frame_extraction import extract_frames
-from src.features_extraction import compute_and_cache_features, load_cached_features
-from src.frame_ordering import estimate_order
-from src.video_reconstruction import reconstruct_video
+from src.utils import video_downloading, verification_of_specs
+from src.frame_extraction import extraction_of_frames
+from src.features_extraction import compute_all_features
+from src.frame_ordering import final_order_estimation
+from src.video_reconstruction import video_reconstruction
 
-
-# ======== Config ========
-DRIVE_LINK = "https://drive.google.com/file/d/1DbR9yap-vgUaPiI3hCEKUnniXr-TrdOt/view?usp=sharing"
-VIDEO_PATH = "data/input_video.mp4"
-FRAMES_DIR = "data/shuffled_frames"
-OUTPUT_PATH = "data/reconstructed/output.mp4"
-CACHE_PATH = "data/features_cache.pkl"
-
+Google_drive_link = "https://drive.google.com/file/d/1DbR9yap-vgUaPiI3hCEKUnniXr-TrdOt/view?usp=sharing"
+input_path = "data/input_video.mp4"
+f_directory = "data/shuffled_frames"
+output_path = "data/reconstructed/output.mp4"
 
 def main():
     os.makedirs("data/reconstructed", exist_ok=True)
     os.makedirs("data/shuffled_frames", exist_ok=True)
 
-    # Step 1: Download if missing
-    if not os.path.exists(VIDEO_PATH):
-        print("Video not found locally. Downloading from Google Drive...")
-        download_from_gdrive_link(DRIVE_LINK, VIDEO_PATH)
+    if not os.path.exists(input_path):#checking if video is present in local storage
+        print("Unable to locate video on local storage, downloading it from google drive...")
+        video_downloading(Google_drive_link, input_path)#downloading video if not in local storage from google drive link
     else:
-        print("✅ Video already exists locally.")
+        print("Video already exists on local storage.")
 
-    # Step 2: Verify specifications
-    verify_video_specs(VIDEO_PATH)
+    verification_of_specs(input_path)#confirming the specs of video i.e 30fps and 10 seconds video.
 
-    # Step 3: Extract frames
-    print("\n📸 Extracting frames...")
-    extract_frames(VIDEO_PATH, FRAMES_DIR)
+    print("\nFrames extraction initiated...")
+    extraction_of_frames(input_path, f_directory)#extracting the frames from the input video.
 
-    # Step 4: Compute or load features
-    print("\n🧮 Computing frame features (AI + handcrafted)...")
-    features_all = compute_and_cache_features(FRAMES_DIR, cache_path=CACHE_PATH)
+    print("\nCalculating the frame features...")
+    features_all = compute_all_features(f_directory)#frame features are being computed.
 
-    # Use only the handcrafted part for ordering (hybrid model handles fusion internally)
     features = {k: v["classic"] for k, v in features_all.items()}
 
-    # Step 5: Estimate correct order
-    print("\n🔍 Estimating correct frame order...")
-    order = estimate_order(FRAMES_DIR, features)
+    print("\nOrdering of the frames is under process...")
+    order = final_order_estimation(f_directory, features)#frames are being reordered correctly.
 
-    # Step 6: Reconstruct final video
-    print("\n🎞️ Reconstructing video...")
-    reconstruct_video(FRAMES_DIR, order, OUTPUT_PATH)
+    print("\nOriginal video being reconstructed...")
+    video_reconstruction(f_directory, order, output_path)#ordered frames are being cnverted to 30 fps and 10 sec video.
 
-    print("\n✅ All steps completed successfully!")
-    print(f"🎬 Final output saved at: {OUTPUT_PATH}")
+    print("Success: original video has been reconstructed.")
+    print(f"Recontructed video path:{output_path}")
 
 
 if __name__ == "__main__":
