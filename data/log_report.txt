@@ -1,0 +1,9 @@
+Execution Time Log
+
+Download & Verification: 0.00 seconds
+Frame Extraction: 3.28 seconds
+Feature Computation: 40.93 seconds
+Frame Ordering: 5.92 seconds
+Video Reconstruction: 7.42 seconds
+
+Total Execution Time: 57.59 seconds
